@@ -294,6 +294,7 @@ void storage_write(void)
         LOG_INF("transpor started in side : %d",transport_started);
         setup_storage_tx();
     }
+
     //probably prefer to implement using work orders for delete,nuke,etc...
     if (delete_started) 
     { 

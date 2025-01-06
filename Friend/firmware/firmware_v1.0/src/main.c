@@ -124,53 +124,129 @@ int main(void)
     NRF_POWER->DCDCEN0=1;
     NRF_POWER->RESETREAS=1;
 
-    LOG_INF("Friend device firmware starting...");
+    LOG_INF("Omi device firmware starting...");
     err = led_start();
     if (err)
     {
-        LOG_ERR("Failed to initialize LEDs: %d", err);
+        LOG_ERR("Failed to initialize LEDs (err %d)", err);
         return err;
     }
+
     // Run the boot LED sequence
     boot_led_sequence();
-    // Indicate transport initialization
-    set_led_green(true);
-    set_led_green(false);
 
-    err = transport_start();
+    // Enable battery
+#ifdef CONFIG_ENABLE_BATTERY
+    err = battery_init();
     if (err)
     {
-        LOG_ERR("Failed to start transport: %d", err);
-        // Blink green LED to indicate error
-        for (int i = 0; i < 5; i++)
-        {
-            set_led_green(!gpio_pin_get_dt(&led_green));
-            k_msleep(200);
-        }
-        set_led_green(false);
-        // return err;
+        LOG_ERR("Battery init failed (err %d)", err);
+        return err;
     }
-    play_boot_sound();
+    err == battery_charge_start();
+    if (err)
+    {
+        LOG_ERR("Battery failed to start (err %d)", err);
+        return err;
+    }
+    LOG_INF("Battery initialized");
+#endif
+
+    // Enable button
+#ifdef CONFIG_ENABLE_BUTTON
+    err = button_init();
+    if (err)
+    {
+        LOG_ERR("Failed to initialize Button (err %d)", err);
+        return err
+    }
+    LOG_INF("Button initialized");
+    activate_button_work();
+#endif
+
+    // Enable accelerometer
+#ifdef CONFIG_ACCELEROMETER
+    err = accel_start();
+    if (err)
+    {
+        LOG_ERR("Accelerometer failed to activated (err %d)", err);
+        return err
+    }
+    LOG_INF("Accelerometer initialized");
+#endif
+
+    // Enable speaker
+#ifdef CONFIG_ENABLE_SPEAKER
+    err = speaker_init();
+    if (err)
+    {
+        LOG_ERR("Speaker failed to start");
+        return err;
+    }
+    LOG_INF("Speaker initialized");
+#endif
+
+    // Enable sdcard
+#ifdef CONFIG_OFFLINE_STORAGE
     err = mount_sd_card();
     if (err)
     {
         LOG_ERR("Failed to mount SD card: %d", err);
+        return err
     }
-    LOG_INF("result of mount:%d",err);
+    LOG_INF("SD Card result of mount:%d", err);
+#endif
 
-    k_msleep(500);
-    err = storage_init();
-    if (err)
-    {
-        LOG_ERR("Failed to initialize storage: %d", err);
-    }
+    // Enable haptic
+#ifdef CONFIG_ENABLE_HAPTIC
     err = init_haptic_pin();
     if (err)
     {
-        LOG_ERR("Failed to initialize haptic pin: %d", err);
+        LOG_ERR("Failed to initialize haptic pin (err %d)", err);
+        return err;
     }
+    LOG_INF("Haptic pin initialized");
+#endif
+
+    // Enable usb
+#ifdef CONFIG_ENABLE_USB
+    err = init_usb();
+    if (err)
+    {
+        LOG_ERR("Failed to initialize power supply (err %d)", err);
+        return err;
+    }
+    LOG_INF("USB initialized");
+#endif
+
+    // Indicate transport initialization
+    set_led_green(true);
+    set_led_green(false);
+
+    // Start transport
+    int transportErr;
+    transportErr = transport_start();
+    if (transportErr)
+    {
+        LOG_ERR("Failed to start transport (err %d)", err);
+        // TODO: Detect the current core is app core or net core
+        // // Blink green LED to indicate error
+        // for (int i = 0; i < 5; i++)
+        // {
+        //     set_led_green(!gpio_pin_get_dt(&led_green));
+        //     k_msleep(200);
+        // }
+        // set_led_green(false);
+        // // return err;
+        return err;
+    }
+    LOG_INF("Transports started");
+
+    play_boot_sound();
 
     set_led_blue(true);
+
+    // Audio codec(opus) callback
     set_codec_callback(codec_handler);
     err = codec_start();
     if (err)
@@ -185,12 +261,14 @@ int main(void)
         set_led_blue(false);
         return err;
     }
+
     play_haptic_milli(500);
     set_led_blue(false);
 
     // Indicate microphone initialization
     set_led_red(true);
     set_led_green(true);
+
     LOG_INF("Starting microphone initialization");
     set_mic_callback(mic_handler);
     err = mic_start();
@@ -212,12 +290,6 @@ int main(void)
     set_led_green(false);
 
     // Indicate successful initialization
-    err = init_usb();
-    if (err)
-    {
-        LOG_ERR("Failed to initialize power supply: %d", err);
-    }
-
     LOG_INF("Omi firmware initialized successfully\n");
     set_led_blue(true);
     k_msleep(1000);

@@ -134,7 +134,7 @@ void broadcast_accel(struct k_work *work_item) {
 
    //only time mega sensor is changed is through here (hopefully),  so no chance of race condition
     int err = bt_gatt_notify(current_connection, &accel_service.attrs[1], &mega_sensor, sizeof(mega_sensor));
-    if (err) 
+    if (err)
     {
        LOG_ERR("Error updating Accelerometer data");
     }
@@ -144,7 +144,7 @@ void broadcast_accel(struct k_work *work_item) {
 struct gpio_dt_spec accel_gpio_pin = {.port = DEVICE_DT_GET(DT_NODELABEL(gpio1)), .pin=8, .dt_flags = GPIO_INT_DISABLE};
 
 //use d4,d5
-static void accel_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value) 
+static void accel_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value)
 {
     if (value == BT_GATT_CCC_NOTIFY)
     {
@@ -159,27 +159,26 @@ static void accel_ccc_config_changed_handler(const struct bt_gatt_attr *attr, ui
         LOG_ERR("Invalid CCC value: %u", value);
     }
 }
-int accel_start() 
+
+int accel_start()
 {
     struct sensor_value odr_attr;
     lsm6dsl_dev = DEVICE_DT_GET_ONE(st_lsm6dsl);
     k_msleep(50);
-    if (lsm6dsl_dev == NULL) 
+    if (lsm6dsl_dev == NULL)
     {
         LOG_ERR("Could not get LSM6DSL device");
-        return 0;
+        return -1;
     }
-    if (!device_is_ready(lsm6dsl_dev)) 
+    if (!device_is_ready(lsm6dsl_dev))
     {
         LOG_ERR("LSM6DSL: not ready");
-        return 0;
+        return -1;
     }
     odr_attr.val1 = 10;
     odr_attr.val2 = 0;
 
-
-
-    if (gpio_is_ready_dt(&accel_gpio_pin)) 
+    if (gpio_is_ready_dt(&accel_gpio_pin))
     {
         printk("Speaker Pin ready\n");
     }
@@ -188,32 +187,32 @@ int accel_start()
         printk("Error setting up speaker Pin\n");
         return -1;
     }
-    if (gpio_pin_configure_dt(&accel_gpio_pin, GPIO_OUTPUT_INACTIVE) < 0) 
+    if (gpio_pin_configure_dt(&accel_gpio_pin, GPIO_OUTPUT_INACTIVE) < 0)
     {
         printk("Error setting up Haptic Pin\n");
         return -1;
     }
     gpio_pin_set_dt(&accel_gpio_pin, 1);
     if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_ACCEL_XYZ,
-        SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) 
+        SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0)
     {
         LOG_ERR("Cannot set sampling frequency for Accelerometer.");
-        return 0;
+        return -1;
     }
     if (sensor_attr_set(lsm6dsl_dev, SENSOR_CHAN_GYRO_XYZ,
         SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
         LOG_ERR("Cannot set sampling frequency for gyro.");
-        return 0;
+        return -1;
     }
-    if (sensor_sample_fetch(lsm6dsl_dev) < 0) 
+    if (sensor_sample_fetch(lsm6dsl_dev) < 0)
     {
         LOG_ERR("Sensor sample update error");
-        return 0;
+        return -1;
     }
 
     LOG_INF("Accelerometer is ready for use \n");
     
-    return 1;
+    return 0;
 }
 // Advertisement data
 static const struct bt_data bt_ad[] = {
@@ -561,7 +560,7 @@ static bool push_to_gatt(struct bt_conn *conn)
 static uint8_t storage_temp_data[MAX_WRITE_SIZE];
 static uint32_t offset = 0;
 static uint16_t buffer_offset = 0;
-// bool write_to_storage(void) 
+// bool write_to_storage(void)
 // {
 //     if (!read_from_tx_queue())
 //     {
@@ -596,7 +595,7 @@ bool write_to_storage(void) {//max possible packing
 
     // buffer_offset = buffer_offset+amount_to_fill;
     //check if adding the new packet will cause a overflow
-    if(buffer_offset + packet_size > MAX_WRITE_SIZE-1) 
+    if(buffer_offset + packet_size > MAX_WRITE_SIZE-1)
     { 
 
     storage_temp_data[buffer_offset] = tx_buffer_size;
@@ -608,7 +607,7 @@ bool write_to_storage(void) {//max possible packing
     memcpy(storage_temp_data + 1, buffer, tx_buffer_size);
 
     }
-    else if (buffer_offset + packet_size == MAX_WRITE_SIZE-1) 
+    else if (buffer_offset + packet_size == MAX_WRITE_SIZE-1)
     { //exact frame needed 
     storage_temp_data[buffer_offset] = tx_buffer_size;
     memcpy(storage_temp_data + buffer_offset + 1, buffer, tx_buffer_size);
@@ -632,7 +631,7 @@ static bool use_storage = true;
 #define MAX_AUDIO_FILE_SIZE 300000
 static int recent_file_size_updated = 0;
 static uint8_t heartbeat_count = 0;
-void update_file_size() 
+void update_file_size()
 {
     file_num_array[0] = get_file_size(1);
     file_num_array[1] = get_offset();
@@ -652,17 +651,17 @@ void pusher(void)
         //updating the most recent file size is expensive!
         static bool file_size_updated = true;
         static bool connection_was_true = false;
-        if (conn && !connection_was_true) 
+        if (conn && !connection_was_true)
         {
             k_msleep(100);
             file_size_updated = false;
             connection_was_true = true;
         } 
-        else if (!conn) 
+        else if (!conn)
         {
             connection_was_true = false;
         }
-        if (!file_size_updated) 
+        if (!file_size_updated)
         {
             printk("updating file size\n");
             update_file_size();
@@ -687,13 +686,13 @@ void pusher(void)
             valid = bt_gatt_is_subscribed(conn, &audio_service.attrs[1], BT_GATT_CCC_NOTIFY); // Check if subscribed
         }
         
-        if (!valid  && !storage_is_on) 
+        if (!valid  && !storage_is_on)
         {
             bool result = false;
             if (file_num_array[1] < MAX_STORAGE_BYTES)
             {
                 k_mutex_lock(&write_sdcard_mutex, K_FOREVER);
-                if(is_sd_on()) 
+                if(is_sd_on())
                 {
                     result = write_to_storage();
                 }
@@ -762,12 +761,10 @@ int bt_on()
    return 0;
 }
 
-//periodic advertising
+// Periodic advertising
 int transport_start()
 {
     k_mutex_init(&write_sdcard_mutex);
-    // Configure callbacks
-    bt_conn_cb_register(&_callback_references);
 
     // Enable Bluetooth
     int err = bt_enable(NULL);
@@ -777,40 +774,37 @@ int transport_start()
         return err;
     }
     LOG_INF("Transport bluetooth initialized");
-    //  Enable accelerometer
+
+    // Configure callbacks
+    bt_conn_cb_register(&_callback_references);
+
+    // Start accelerometer service
 #ifdef CONFIG_ACCELEROMETER
-    err = accel_start();
-    if (!err) 
-    {
-        LOG_INF("Accelerometer failed to activate\n");
-    }
-    else 
-    {
-        LOG_INF("Accelerometer initialized");
-        bt_gatt_service_register(&accel_service);
-    }
+    bt_gatt_service_register(&accel_service);
 #endif
-    //  Enable button
+
+    // Start button service
 #ifdef CONFIG_ENABLE_BUTTON
-    button_init();
     register_button_service();
-    activate_button_work();
 #endif
 
+    // Start speaker service
 #ifdef CONFIG_ENABLE_SPEAKER
-    err = speaker_init();
-    if (err) 
-    {
-        LOG_ERR("Speaker failed to start");
-        return 0;
-    }
-    LOG_INF("Speaker initialized");
     register_speaker_service();
-
-
 #endif
-    // Start advertising
 
+    // Start storage servive
+#ifdef CONFIG_OFFLINE_STORAGE
+    err = storage_init();
+    if (err)
+    {
+        LOG_ERR("Failed to initialize storage: %d", err);
+        return err;
+    }
+    LOG_ERR("Storage service initiated: (result %d)", err);
+#endif
+
+    // Start advertising
     memset(storage_temp_data, 0, OPUS_PADDED_LENGTH * 4);
     bt_gatt_service_register(&storage_service);
     bt_gatt_service_register(&audio_service);
@@ -825,20 +819,6 @@ int transport_start()
     {
         LOG_INF("Advertising successfully started");
     }
-
-    int battErr = 0;
-    battErr |= battery_init();
-    battErr |= battery_charge_start();
-    if (battErr)
-    {
-        LOG_ERR("Battery init failed (err %d)", battErr);
-    }
-    else
-    {
-        LOG_INF("Battery initialized");
-    }
-
-    // friend_init();
 
     // Start pusher
     ring_buf_init(&ring_buf, sizeof(tx_queue), tx_queue);

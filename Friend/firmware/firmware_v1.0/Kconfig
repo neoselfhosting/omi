@@ -8,13 +8,25 @@ config CODEC_OPUS
 config OFFLINE_STORAGE
 	bool "Offline SD Card Storage Support"
 	default n
+
 config ACCELEROMETER
     bool "Accelerometer Support"
     default n
+
 config ENABLE_BUTTON
     bool "Button support on Devkit2"
     default n
+
 config ENABLE_SPEAKER
-    bool "Enable the speaker!!"
-    default n 
+    bool "Enable the speaker"
+    default y
+
+config ENABLE_BATTERY
+    bool "Enable the battery"
+    default y
+
+config ENABLE_USB
+    bool "Enable the usb"
+    default y
+
 endmenu
