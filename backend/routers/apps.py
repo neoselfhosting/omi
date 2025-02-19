@@ -89,9 +89,9 @@ def create_app(app_data: str = Form(...), file: UploadFile = File(...), uid=Depe
     # Backward compatibility: Set app_home_url from first auth step if not provided
     if 'external_integration' in data:
         ext_int = data['external_integration']
-        if (not ext_int.get('app_home_url') and 
-            ext_int.get('auth_steps') and 
-            len(ext_int['auth_steps']) == 1):
+        if (not ext_int.get('app_home_url') and
+            ext_int.get('auth_steps') and
+                len(ext_int['auth_steps']) == 1):
             ext_int['app_home_url'] = ext_int['auth_steps'][0]['url']
 
     add_app_to_db(data)
@@ -213,9 +213,9 @@ def update_app(app_id: str, app_data: str = Form(...), file: UploadFile = File(N
     # Backward compatibility: Set app_home_url from first auth step if not provided
     if 'external_integration' in data:
         ext_int = data['external_integration']
-        if (not ext_int.get('app_home_url') and 
-            ext_int.get('auth_steps') and 
-            len(ext_int['auth_steps']) == 1):
+        if (not ext_int.get('app_home_url') and
+            ext_int.get('auth_steps') and
+                len(ext_int['auth_steps']) == 1):
             ext_int['app_home_url'] = ext_int['auth_steps'][0]['url']
 
     # Warn: the user can update any fields, e.g. approved.
@@ -442,7 +442,7 @@ def generate_description_endpoint(data: dict, uid: str = Depends(auth.get_curren
 # ******************************************************
 
 @router.get('/v1/personas/twitter/profile', tags=['v1'])
-async def get_twitter_profile_data(username: str, uid: str = Depends(auth.get_current_user_uid)):
+async def get_twitter_profile_data(username: str):
     if username.startswith('@'):
         username = username[1:]
     res = await get_twitter_profile(username)
@@ -453,7 +453,7 @@ async def get_twitter_profile_data(username: str, uid: str = Depends(auth.get_cu
 
 @router.get('/v1/personas/twitter/verify-ownership', tags=['v1'])
 async def verify_twitter_ownership_tweet(
-    username: str, 
+    username: str,
     uid: str = Depends(auth.get_current_user_uid),
     persona_id: str | None = None
 ):
