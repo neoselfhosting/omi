@@ -164,3 +164,22 @@ def get_default_payment_method(uid: str):
     user_data = user_ref.get().to_dict()
     return user_data.get('default_payment_method', None)
 
+
+def set_twitter_credentials(uid: str, credentials: dict):
+    """Store Twitter OAuth credentials for a user"""
+    user_ref = db.collection('users').document(uid)
+    user_ref.update({'twitter_credentials': credentials})
+
+
+def get_twitter_credentials(uid: str):
+    """Retrieve Twitter OAuth credentials for a user"""
+    user_ref = db.collection('users').document(uid)
+    user_data = user_ref.get().to_dict()
+    return user_data.get('twitter_credentials', None)
+
+
+def delete_twitter_credentials(uid: str):
+    """Remove Twitter OAuth credentials for a user"""
+    user_ref = db.collection('users').document(uid)
+    user_ref.update({'twitter_credentials': None})
+

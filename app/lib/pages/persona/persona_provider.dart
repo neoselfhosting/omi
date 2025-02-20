@@ -1,5 +1,7 @@
 import 'dart:io';
-
+import 'dart:convert';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:friend_private/backend/http/api/apps.dart';
 import 'package:friend_private/backend/preferences.dart';
@@ -28,12 +30,61 @@ class PersonaProvider extends ChangeNotifier {
 
   Map twitterProfile = {};
   App? userPersona;
-
+  bool isConnectingTwitter = false;
+  String? _codeVerifier;
   String username = '';
 
   void updateUsername(String value) {
     username = value;
     notifyListeners();
+  }
+
+  String _generateCodeVerifier() {
+    final random = Random.secure();
+    final values = List<int>.generate(32, (i) => random.nextInt(256));
+    return base64UrlEncode(values).replaceAll('=', '');
+  }
+
+  String _generateCodeChallenge(String verifier) {
+    final bytes = utf8.encode(verifier);
+    final digest = sha256.convert(bytes);
+    return base64UrlEncode(digest.bytes).replaceAll('=', '');
+  }
+
+  Future<void> connectTwitter(String uid) async {
+    try {
+      setIsConnectingTwitter(true);
+      
+      // Generate PKCE values
+      _codeVerifier = _generateCodeVerifier();
+      final codeChallenge = _generateCodeChallenge(_codeVerifier!);
+      
+      // Twitter OAuth 2.0 authorization URL
+      final twitterAuthUrl = Uri.parse('https://twitter.com/i/oauth2/authorize')
+          .replace(queryParameters: {
+        'response_type': 'code',
+        'client_id': 'YOUR_CLIENT_ID', // Replace with your Twitter client ID
+        'redirect_uri': 'https://api.omi.me/twitter/callback',
+        'scope': 'tweet.read users.read dm.read',
+        'state': uid,
+        'code_challenge': codeChallenge,
+        'code_challenge_method': 'S256',
+      });
+      
+      final canLaunch = await canLaunchUrl(twitterAuthUrl);
+      if (!canLaunch) {
+        throw 'Could not launch Twitter auth URL';
+      }
+      
+      await launchUrl(
+        twitterAuthUrl,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (e) {
+      AppSnackbar.showSnackbarError('Failed to connect Twitter: $e');
+    } finally {
+      setIsConnectingTwitter(false);
+    }
   }
 
   Future getTwitterProfile(String username) async {
