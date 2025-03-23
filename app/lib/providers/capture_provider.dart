@@ -481,12 +481,12 @@ class CaptureProvider extends ChangeNotifier
   }
 
   void _startKeepAliveServices() {
-    if (_recordingDevice != null && _socket?.state != SocketServiceState.connected) {
+    var recording = _recordingDevice != null || recordingState == RecordingState.record;
+    if (recording && _socket?.state != SocketServiceState.connected) {
       _keepAliveTimer?.cancel();
       _keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (t) async {
         debugPrint("[Provider] keep alive...");
-
-        if (_recordingDevice == null || _socket?.state == SocketServiceState.connected) {
+        if (!recording || _socket?.state == SocketServiceState.connected) {
           t.cancel();
           return;
         }
