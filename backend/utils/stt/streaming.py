@@ -41,9 +41,9 @@ deepgram_multi_languages = ['multi', 'en', 'es']
 deepgram_nova3_multi_languages = ["multi", "en", "en-US", "en-AU", "en-GB", "en-NZ", "en-IN", "es", "es-419", "fr", "fr-CA", "de", "hi", "ru", "pt", "pt-BR", "pt-PT", "ja", "it", "nl", "nl-BE"]
 
 def get_stt_service_for_language(language: str):
-    # # Soniox's 'multi'
-    # if language in soniox_multi_languages:
-    #     return STTService.soniox, 'multi', 'stt-rt-preview'
+    # Soniox's 'multi'
+    if language in soniox_multi_languages:
+        return STTService.soniox, 'multi', 'stt-rt-preview'
 
     # Deepgram's 'multi'
     # if language in deepgram_multi_languages:
@@ -266,7 +266,7 @@ async def process_audio_soniox(stream_transcript, sample_rate: int, language: st
         'audio_format': audio_format,
         'sample_rate': sample_rate,
         'num_channels': 1,
-        'enable_speaker_tags': True,
+        'enable_speaker_diarization': True,
         'language_hints': language_hints,
     }
 
@@ -308,85 +308,98 @@ async def process_audio_soniox(stream_transcript, sample_rate: int, language: st
                         print(f"Soniox error: {error_code} - {error_message}")
                         raise Exception(f"Soniox error: {error_code} - {error_message}")
 
+                    # Check if transcription is finished
+                    if response.get('finished', False):
+                        if current_segment:
+                            stream_transcript([current_segment])
+                            current_segment = None
+                            current_segment_time = None
+                        print("Soniox transcription complete.")
+                        continue
+
                     # Process response based on tokens field
                     if 'tokens' in response:
                         tokens = response.get('tokens', [])
 
                         if not tokens:
-                            if current_segment:
+                            continue
+
+                        # Only process final tokens
+                        final_tokens = []
+
+                        for token in tokens:
+                            is_final = token.get('is_final', False)
+
+                            if is_final:
+                                final_tokens.append(token)
+
+                        # Process final tokens (if any)
+                        if final_tokens:
+                            # Group tokens by speaker
+                            speaker_groups = {}
+
+                            for token in final_tokens:
+                                speaker_id = token.get('speaker', '1')  # Default to speaker '1' if not specified
+
+                                if speaker_id not in speaker_groups:
+                                    speaker_groups[speaker_id] = []
+
+                                speaker_groups[speaker_id].append(token)
+
+                            # Process each speaker group
+                            for speaker_id, speaker_tokens in speaker_groups.items():
+                                # Combine all tokens for this speaker into text
+                                content = ''.join([token.get('text', '') for token in speaker_tokens])
+
+                                # Get timing information from the first and last tokens
+                                start_time = speaker_tokens[0].get('start_ms', 0) / 1000.0
+                                end_time = speaker_tokens[-1].get('end_ms', 0) / 1000.0
+
+                                if preseconds > 0 and start_time < preseconds:
+                                    # Skip words before preseconds
+                                    continue
+
+                                # Adjust timing if we have preseconds
+                                if preseconds > 0:
+                                    start_time -= preseconds
+                                    end_time -= preseconds
+
+                                # Determine if this is the user based on speaker identification
+                                is_user = False
+                                if has_speech_profile and speaker_id == uid:
+                                    is_user = True
+                                elif preseconds > 0 and speaker_id == "1":
+                                    is_user = True
+
+                                # Check if we need to create a new segment or append to existing
+                                speaker_key = f"SPEAKER_{speaker_id}"
+
+                                # If current segment exists but has a different speaker, send it and start new one
+                                if current_segment and current_segment['speaker'] != speaker_key:
+                                    stream_transcript([current_segment])
+                                    current_segment = None
+
+                                # Create a new segment or append to existing one
+                                if current_segment is None:
+                                    current_segment = {
+                                        'speaker': speaker_key,
+                                        'start': start_time,
+                                        'end': end_time,
+                                        'text': content,
+                                        'is_user': is_user,
+                                        'person_id': None
+                                    }
+                                    current_segment_time = current_time
+                                else:
+                                    current_segment['text'] += content
+                                    current_segment['end'] = end_time
+
+                            # If we have a complete sentence (ending with punctuation), send it
+                            punctuation_marks = ['.', '?', '!']
+                            if current_segment and any(current_segment['text'].endswith(mark) for mark in punctuation_marks):
                                 stream_transcript([current_segment])
                                 current_segment = None
                                 current_segment_time = None
-                            continue
-
-                        # Extract speaker information and text from tokens
-                        new_speaker_id = None
-                        speaker_change_detected = False
-                        token_texts = []
-
-                        # First check if any token contains a speaker tag
-                        for token in tokens:
-                            token_text = token['text']
-                            if token_text.startswith('spk:'):
-                                new_speaker_id = token_text.split(':')[1] if ':' in token_text else "1"
-                                speaker_change_detected = (current_speaker_id is not None and
-                                                           current_speaker_id != new_speaker_id)
-                                current_speaker_id = new_speaker_id
-                            else:
-                                token_texts.append(token_text)
-
-                        # If no speaker tag found in this response, use the current speaker
-                        if new_speaker_id is None and current_speaker_id is not None:
-                            new_speaker_id = current_speaker_id
-                        elif new_speaker_id is None:
-                            new_speaker_id = "1"  # Default speaker
-
-                        # If we have either a speaker change or threshold exceeded, send the current segment and start a new one
-                        punctuation_marks = ['.', '?', '!', ',', ';', ':', ' ']
-                        time_threshold_exceed = current_segment_time and current_time - current_segment_time > 0.3 and \
-                            (current_segment and current_segment['text'][-1] in punctuation_marks)
-                        if (speaker_change_detected or time_threshold_exceed) and current_segment:
-                            stream_transcript([current_segment])
-                            current_segment = None
-                            current_segment_time = None
-
-                        # Combine all non-speaker tokens into text
-                        content = ''.join(token_texts)
-
-                        # Get timing information
-                        start_time = tokens[0]['start_ms'] / 1000.0
-                        end_time = tokens[-1]['end_ms'] / 1000.0
-
-                        if preseconds > 0 and start_time < preseconds:
-                            # print('Skipping word', start_time)
-                            continue
-
-                        # Adjust timing if we have preseconds (for speech profile)
-                        if preseconds > 0:
-                            start_time -= preseconds
-                            end_time -= preseconds
-
-                        # Determine if this is the user based on speaker identification
-                        is_user = False
-                        if has_speech_profile and new_speaker_id == uid:
-                            is_user = True
-                        elif preseconds > 0 and new_speaker_id == "1":
-                            is_user = True
-
-                        # Create a new segment or append to existing one
-                        if current_segment is None:
-                            current_segment = {
-                                'speaker': f"SPEAKER_0{new_speaker_id}",
-                                'start': start_time,
-                                'end': end_time,
-                                'text': content,
-                                'is_user': is_user,
-                                'person_id': None
-                            }
-                            current_segment_time = current_time
-                        else:
-                            current_segment['text'] += content
-                            current_segment['end'] = end_time
 
                     else:
                         print(f"Unexpected Soniox response format: {response}")
