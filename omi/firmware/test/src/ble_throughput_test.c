@@ -7,10 +7,11 @@
 #include <zephyr/sys/atomic.h> // Include for atomic operations
 #include <stdint.h>
 #include <zephyr/timing/timing.h> // Include for timing
+#include <math.h> // For float conversion in logs
 
 LOG_MODULE_REGISTER(transport_ble_test, CONFIG_LOG_DEFAULT_LEVEL);
 
-#define TEST_PACKET_SIZE 50
+#define TEST_PACKET_SIZE 244
 #define WRITE_INTERVAL_MS 10
 #define TEST_RING_BUF_SIZE (TEST_PACKET_SIZE * 150) // Store 100 packets
 #define WRITER_STACK_SIZE 1024*10
@@ -34,6 +35,11 @@ static struct k_thread writer_thread_data;
 K_THREAD_STACK_DEFINE(reader_stack_area, READER_STACK_SIZE);
 static struct k_thread reader_thread_data;
 
+// --- GATT Exchange MTU Params ---
+// Placed here as it needs to be globally accessible for the callback
+static struct bt_gatt_exchange_params exchange_params;
+
+// --- Logger Thread Definitions ---
 #define LOGGER_STACK_SIZE 1024
 #define LOGGER_PRIORITY K_PRIO_PREEMPT(8) // Lower priority than reader/writer
 K_THREAD_STACK_DEFINE(logger_stack_area, LOGGER_STACK_SIZE);
@@ -68,10 +74,21 @@ static const struct bt_data test_ad[] = {
     BT_DATA(BT_DATA_NAME_COMPLETE, "OMI-BLE-TEST", sizeof("OMI-BLE-TEST") - 1),
 };
 
+// Forward declarations for update functions and callbacks
+static void update_phy(struct bt_conn *conn);
+static void update_data_length(struct bt_conn *conn);
+static void update_mtu(struct bt_conn *conn);
+static void on_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency, uint16_t timeout);
+static void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param);
+static void on_le_data_len_updated(struct bt_conn *conn, struct bt_conn_le_data_len_info *info);
+static void exchange_func(struct bt_conn *conn, uint8_t att_err, struct bt_gatt_exchange_params *params);
+
+
 // --- Test-specific Connection Callbacks ---
 
 static void test_connected(struct bt_conn *conn, uint8_t err)
 {
+    struct bt_conn_info info; // For logging initial params
     if (err) {
         LOG_ERR("Connection failed (err 0x%02x)", err);
         if (test_conn) {
@@ -81,8 +98,26 @@ static void test_connected(struct bt_conn *conn, uint8_t err)
         test_subscribed = false;
     } else {
         LOG_INF("Connected");
-        test_conn = bt_conn_ref(conn);
+        test_conn = bt_conn_ref(conn); // Increment ref count
         test_subscribed = false; // Require subscription after connection
+
+        // Log initial connection parameters
+        err = bt_conn_get_info(test_conn, &info);
+        if (err) {
+            LOG_ERR("Failed to get connection info (err %d)", err);
+        } else {
+            double connection_interval = info.le.interval * 1.25; // in ms
+            uint16_t supervision_timeout = info.le.timeout * 10; // in ms
+            LOG_INF("Initial conn params: interval %.2f ms, latency %d intervals, timeout %d ms",
+                    connection_interval, info.le.latency, supervision_timeout);
+        }
+
+        // Initiate PHY, Data Length, and MTU updates
+        update_phy(test_conn);
+        // Add a delay before data length and MTU updates as per Nordic example
+        k_sleep(K_MSEC(1000));
+        update_data_length(test_conn);
+        update_mtu(test_conn);
     }
 }
 
@@ -96,10 +131,121 @@ static void test_disconnected(struct bt_conn *conn, uint8_t reason)
     }
 }
 
+// --- Parameter/PHY/Data Length/MTU Update Callbacks ---
+
+static void on_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency, uint16_t timeout)
+{
+    double connection_interval = interval * 1.25; // in ms
+    uint16_t supervision_timeout = timeout * 10; // in ms
+    LOG_INF("Connection parameters updated: interval %.2f ms, latency %d intervals, timeout %d ms",
+            connection_interval, latency, supervision_timeout);
+}
+
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+static void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
+{
+    LOG_INF("PHY updated: TX PHY %u, RX PHY %u", param->tx_phy, param->rx_phy);
+    // Detailed logging based on PHY type
+    if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_1M) {
+        LOG_INF("PHY updated. New PHY: 1M");
+    } else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_2M) {
+        LOG_INF("PHY updated. New PHY: 2M");
+    } else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_CODED_S8) {
+        LOG_INF("PHY updated. New PHY: Coded S8 (Long Range)");
+    } else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_CODED_S2) {
+         LOG_INF("PHY updated. New PHY: Coded S2 (Long Range)");
+    } else {
+         LOG_INF("PHY updated. New PHY: Unknown (%u)", param->tx_phy);
+    }
+}
+#endif // CONFIG_BT_USER_PHY_UPDATE
+
+#if defined(CONFIG_BT_USER_DATA_LEN_UPDATE)
+static void on_le_data_len_updated(struct bt_conn *conn, struct bt_conn_le_data_len_info *info)
+{
+    LOG_INF("Data length updated: TX %u bytes/%u us, RX %u bytes/%u us",
+            info->tx_max_len, info->tx_max_time, info->rx_max_len, info->rx_max_time);
+}
+#endif // CONFIG_BT_USER_DATA_LEN_UPDATE
+
+static void exchange_func(struct bt_conn *conn, uint8_t att_err, struct bt_gatt_exchange_params *params)
+{
+    if (att_err) {
+        LOG_ERR("MTU exchange failed (err %u)", att_err);
+    } else {
+        uint16_t mtu = bt_gatt_get_mtu(conn);
+        LOG_INF("MTU exchange successful. New MTU: %u (Payload: %u)", mtu, mtu - 3);
+    }
+}
+
+
+// --- Connection Callback Struct ---
 static struct bt_conn_cb test_conn_callbacks = {
     .connected = test_connected,
     .disconnected = test_disconnected,
+    .le_param_updated = on_le_param_updated, // Add LE param update callback
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    .le_phy_updated = on_le_phy_updated,     // Add PHY update callback
+#endif
+#if defined(CONFIG_BT_USER_DATA_LEN_UPDATE)
+    .le_data_len_updated = on_le_data_len_updated, // Add Data Length update callback
+#endif
 };
+
+
+// --- Update Request Functions ---
+
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+static void update_phy(struct bt_conn *conn)
+{
+    int err;
+    // Prefer 2M PHY for higher throughput
+    const struct bt_conn_le_phy_param preferred_phy = {
+        .options = BT_CONN_LE_PHY_OPT_NONE,
+        .pref_rx_phy = BT_GAP_LE_PHY_2M,
+        .pref_tx_phy = BT_GAP_LE_PHY_2M,
+    };
+    LOG_INF("Requesting PHY update...");
+    err = bt_conn_le_phy_update(conn, &preferred_phy);
+    if (err) {
+        LOG_ERR("bt_conn_le_phy_update() failed (err %d)", err);
+    }
+}
+#else
+static void update_phy(struct bt_conn *conn) { /* Do nothing if not enabled */ }
+#endif // CONFIG_BT_USER_PHY_UPDATE
+
+#if defined(CONFIG_BT_USER_DATA_LEN_UPDATE)
+static void update_data_length(struct bt_conn *conn)
+{
+    int err;
+    // Request maximum data length
+    struct bt_conn_le_data_len_param data_len_param = {
+        .tx_max_len = BT_GAP_DATA_LEN_MAX,
+        .tx_max_time = BT_GAP_DATA_TIME_MAX,
+    };
+    LOG_INF("Requesting data length update...");
+    err = bt_conn_le_data_len_update(conn, &data_len_param);
+    if (err) {
+        LOG_ERR("bt_conn_le_data_len_update() failed (err %d)", err);
+    }
+}
+#else
+static void update_data_length(struct bt_conn *conn) { /* Do nothing if not enabled */ }
+#endif // CONFIG_BT_USER_DATA_LEN_UPDATE
+
+static void update_mtu(struct bt_conn *conn)
+{
+    int err;
+    exchange_params.func = exchange_func; // Set the callback function
+
+    LOG_INF("Requesting MTU exchange...");
+    err = bt_gatt_exchange_mtu(conn, &exchange_params);
+    if (err) {
+        LOG_ERR("bt_gatt_exchange_mtu() failed (err %d)", err);
+    }
+}
+
 
 // --- Test Threads ---
 
